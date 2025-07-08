@@ -16,15 +16,41 @@ Modify [App.java](src/main/java/com/cbfacademy/App.java) to connect to the main 
 
 You will need to use `HttpURLConnection`, `BufferedReader` and `InputStreamReader` classes.
 
-Whenever possible, use the try-with-resources construct we saw earlier in the course, and ensure to release all resources.
+Whenever possible, use the try-with-resources construct we saw earlier in the course, and ensure all resources are released.
+
+## :white_check_mark: Verify Your Implementation
+
+To verify that your code works as expected, run the tests. In your terminal, ensure that you are in the root of this repository, then run the following command:
+
+```shell
+./mvnw clean test
+```
 
 ## :phone: Client & Server
 
-Create a simple program with two classes:
-- a `ExerciseServer` class which uses a `ServerSocket` to listen for connections on `localhost:4040`, then prints message it receives on the screen.
-- a `ExerciseClient` class which requests a connection to server, sends a simple text message to the server.
+Create two executable classes:
+- a `SocketServer` class which uses a `ServerSocket` to listen for connections on `localhost:4040`, then prints message it receives on the screen.
+- a `SocketClient` class which requests a connection to server, sends a simple text message to the server.
 
-Ensure to release all resources at the end of your program.
+Ensure all resources created in your programmes are released appropriately. To test your code manually, you'll need to run each application in a separate terminal:
+
+Terminal 1:
+```shell
+./mvnw compile exec:java -Dexec.mainClass="com.cbfacademy.SocketServer"
+```
+
+Terminal 2:
+```shell
+./mvnw compile exec:java -Dexec.mainClass="com.cbfacademy.SocketClient"
+```
+
+## :white_check_mark: Verify Your Implementation
+
+To verify that your code works as expected, run the tests:
+
+```shell
+./mvnw clean test
+```
 
 [1]: https://docs.oracle.com/javase/21/docs/api/index.html
 [2]: https://junit.org/junit5/
