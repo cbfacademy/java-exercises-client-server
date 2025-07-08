@@ -9,7 +9,7 @@ env:
   GRADING_REPO: cbfacademy/autograding-java-exercises
   GRADING_REPO_PATH: grading-repo
   STUDENT_REPO_PATH: student-repo
-  MAX_TESTS: 0 # TODO: Update this to the actual number of tests available for the exercise
+  MAX_TESTS: 8
 
 jobs:
   autograding:
