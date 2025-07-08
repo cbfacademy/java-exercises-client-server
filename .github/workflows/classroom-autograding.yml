@@ -1,0 +1,473 @@
+name: Classroom Autograding
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  GRADING_REPO: cbfacademy/autograding-java-exercises
+  GRADING_REPO_PATH: grading-repo
+  STUDENT_REPO_PATH: student-repo
+  MAX_TESTS: 0 # TODO: Update this to the actual number of tests available for the exercise
+
+jobs:
+  autograding:
+    if: ${{ github.event.repository.fork && github.event.repository.owner.type == 'Organization' && startsWith(github.repository_owner, 'cbfacademy') && github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout grading repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GRADING_REPO }}
+          token: ${{ secrets.CLASSROOM_TOKEN }}
+          path: ${{ env.GRADING_REPO_PATH }}
+
+      - name: Checkout student repo branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CLASSROOM_TOKEN }}
+          path: ${{ env.STUDENT_REPO_PATH }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run tests
+        id: test
+        run: |
+          cd ${{ env.STUDENT_REPO_PATH }}
+          chmod +x mvnw
+          ./mvnw test -B || true
+        continue-on-error: true
+
+      - name: Parse test results
+        id: parse
+        if: always() && success() || failure()
+        uses: dorny/test-reporter@v2
+        with:
+          name: JUnit Results
+          working-directory: ${{ env.STUDENT_REPO_PATH }}
+          path: "**/target/surefire-reports/*.xml"
+          reporter: java-junit
+          fail-on-empty: false
+          fail-on-error: false
+
+      - name: Get tests score
+        id: get-tests-score
+        if: github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const passed = parseInt(${{ steps.parse.outputs.passed || 0 }}, 10);
+            const failed = parseInt(${{ steps.parse.outputs.failed || 0 }}, 10);
+            const skipped = parseInt(${{ steps.parse.outputs.skipped || 0 }}, 10);
+            const total = ${{ env.MAX_TESTS }};
+            const result = `${passed}/${total}`
+
+            core.setOutput('total', total);
+            core.setOutput('passed', passed);
+
+            return result;
+
+      - name: Set up grading branch in grading repo
+        id: setup-grading-branch
+        run: |
+          cd ${{ env.GRADING_REPO_PATH }}
+          GRADING_BRANCH="grading/${GITHUB_RUN_ID}-${RANDOM}"
+          git checkout -b $GRADING_BRANCH
+          rsync -a --exclude='.git' --exclude='.github/workflows/*' ../${{ env.STUDENT_REPO_PATH }}/ .
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add .
+          git commit -m "Sync from ${{ github.repository }}@${{ github.ref }}" || echo "No changes to commit"
+          git push -f origin $GRADING_BRANCH
+          echo "GRADING_BRANCH=$GRADING_BRANCH" >> $GITHUB_ENV
+
+      - name: Create or update grading PR in grading repo
+        id: create-grading-pr
+        env:
+          GH_TOKEN: ${{ secrets.CLASSROOM_TOKEN }}
+        run: |
+          cd ${{ env.GRADING_REPO_PATH }}
+          PR_NUMBER=$(gh pr list --head "$GRADING_BRANCH" --state open --json number -q '.[0].number')
+          if [ -z "$PR_NUMBER" ]; then
+            PR_URL=$(gh pr create --base main --head "$GRADING_BRANCH" --title "Grading: ${{ github.repository }}@${{ github.ref }}" --body "Original Commit SHA: $GITHUB_SHA")
+            PR_NUMBER=$(gh pr view "$PR_URL" --json number -q '.number')
+          fi
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Get agent score
+        id: get-agent-score
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.create-grading-pr.outputs.pr_number }}
+          REPO: ${{ env.GRADING_REPO }}
+          POLL_INTERVAL: ${{ vars.WORKFLOW_POLL_INTERVAL || 10 }}
+          POLL_TIMEOUT: ${{ vars.WORKFLOW_POLL_TIMEOUT || 180 }}
+        with:
+          github-token: ${{ secrets.CLASSROOM_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.REPO.split('/');
+            const prNumber = process.env.PR_NUMBER;
+            const pollInterval = parseInt(process.env.POLL_INTERVAL, 10) * 1000;
+            const pollTimeout = parseInt(process.env.POLL_TIMEOUT, 10) * 1000;
+            const start = Date.now();
+            let run;
+            let runs;
+            let completed = false;
+            let lastRunId = null;
+            let pr = null;
+
+            try {
+              const prResponse = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+
+              pr = prResponse.data;
+            } catch (err) {
+              if (err.status === 404) {
+                core.setFailed('PR not found');
+
+                return;
+              } else {
+                core.setFailed(`Error querying PR: ${err.message}`);
+
+                return;
+              }
+            }
+
+            if (!pr) {
+              core.setFailed('PR not found');
+
+              return;
+            }
+
+            const headSha = pr.head.sha;
+            // Poll for workflow runs on this SHA
+            while (Date.now() - start < pollTimeout) {
+              try {
+                runs = await github.rest.actions.listWorkflowRunsForRepo({
+                  owner,
+                  repo,
+                  head_sha: headSha,
+                  event: 'pull_request',
+                  per_page: 5,
+                });
+              } catch (err) {
+                core.setFailed(`Error querying workflow runs: ${err.message}`);
+
+                return;
+              }
+              // Filter for runs that are for this PR and are completed
+              const prRuns = runs.data.workflow_runs.filter(r => r.head_sha === headSha);
+
+              completed = prRuns.length > 0 && prRuns.every(r => r.status === 'completed');
+
+              if (completed) {
+                lastRunId = prRuns[0].id;
+
+                break;
+              }
+
+              await new Promise(res => setTimeout(res, pollInterval));
+            }
+
+            if (!completed) {
+              core.setFailed('Timed out waiting for PR workflows to complete');
+
+              return;
+            }
+            // Get jobs for the last workflow run
+            let jobsData;
+
+            try {
+              const jobsResp = await github.rest.actions.listJobsForWorkflowRun({
+                owner,
+                repo,
+                run_id: lastRunId,
+              });
+
+              jobsData = jobsResp.data;
+            } catch (err) {
+              core.setFailed(`Error querying jobs for workflow run: ${err.message}`);
+
+              return;
+            }
+            // For each job, get the check_run_url and look for annotations
+            let aiScore = null;
+
+            for (const job of jobsData.jobs) {
+              if (!job.check_run_url) continue;
+
+              const checkRunId = job.check_run_url.split('/').pop();
+              // Get check run details
+              let checkRun;
+
+              try {
+                const checkRunResp = await github.rest.checks.get({
+                  owner,
+                  repo,
+                  check_run_id: checkRunId,
+                });
+
+                checkRun = checkRunResp.data;
+              } catch (err) {
+                core.setFailed(`Error querying check run: ${err.message}`);
+
+                return;
+              }
+
+              const output = checkRun.output;
+
+              if (output && output.annotations_url && output.annotations_count > 0) {
+                let annotationsResp;
+
+                try {
+                  annotationsResp = await github.request(`GET ${output.annotations_url}`, {
+                    owner,
+                    repo,
+                    check_run_id: checkRunId,
+                    per_page: 100
+                  });
+                } catch (err) {
+                  core.setFailed(`Error querying annotations: ${err.message}`);
+
+                  return;
+                }
+                const annotations = annotationsResp.data;
+                const aiScoreAnnotation = annotations.find(annotation => annotation.title === 'AI score');
+
+                if (aiScoreAnnotation) {
+                  aiScore = aiScoreAnnotation.message;
+                }
+              }
+              if (aiScore) break;
+            }
+            if (!aiScore) {
+              core.setFailed('AI score annotation not found');
+
+              return;
+            }
+
+            return `${aiScore}/100`;
+
+      - name: Close grading PR
+        if: always() && steps.create-grading-pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.CLASSROOM_TOKEN }}
+        run: |
+          gh pr close "${{ steps.create-grading-pr.outputs.pr_number }}" --repo "${{ env.GRADING_REPO }}" --delete-branch
+
+      - name: Aggregate points
+        id: aggregate-points
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Helper function to parse result string and scale to 5
+            function parseResult(result) {
+              const [earnedStr, totalStr] = result.replace(/^"|"$/g, '').split('/');
+              let earned = parseInt(earnedStr, 10);
+              let available = parseInt(totalStr, 10);
+
+              if (available > 0) {
+                earned = Math.round((earned / available) * 5);
+              } else {
+                earned = 0;
+              }
+              return earned;
+            }
+
+            // Parse get-tests-score and get-agent-score results (e.g., 34/42, 27/100)
+            const testsScore = parseResult('${{ steps.get-tests-score.outputs.result }}');
+            const agentScore = parseResult('${{ steps.get-agent-score.outputs.result }}');
+            // Total out of 10
+            const totalScore = testsScore + agentScore;
+
+            console.log(`Functionality (out of 5): ${testsScore}`);
+            console.log(`Code Quality (out of 5): ${agentScore}`);
+            console.log(`Total (out of 10): ${totalScore}`);
+            core.setOutput('functionality', testsScore);
+            core.setOutput('code_quality', agentScore);
+            core.setOutput('earned', totalScore);
+            core.setOutput('available', 10);
+
+      - name: Trigger Airtable update
+        uses: actions/github-script@v7
+        env:
+          GRADING_REPO: ${{ env.GRADING_REPO }}
+          REPO_URL: ${{ github.repository }}
+          TEST_SCORE: ${{ steps.aggregate-points.outputs.functionality }}
+          AGENT_SCORE: ${{ steps.aggregate-points.outputs.code_quality }}
+        with:
+          github-token: ${{ secrets.CLASSROOM_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.GRADING_REPO.split('/');
+            // Ensure repository URL has trailing slash
+            const repoUrl = process.env.REPO_URL.endsWith('/') ? process.env.REPO_URL : `${process.env.REPO_URL}/`;
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner,
+                repo,
+                workflow_id: 'update-airtable.yml',
+                ref: 'main',
+                inputs: {
+                  test_score: process.env.TEST_SCORE,
+                  agent_score: process.env.AGENT_SCORE,
+                  repository_url: `https://github.com/${repoUrl}`
+                }
+              });
+              console.log('Successfully triggered Airtable update workflow');
+            } catch (error) {
+              core.setFailed(`Failed to trigger Airtable update workflow: ${error.message}`);
+            }
+
+      - name: Post student feedback
+        uses: actions/github-script@v7
+        env:
+          SCORE: ${{ steps.aggregate-points.outputs.earned }}/${{ steps.aggregate-points.outputs.available }}
+          GRADING_REPO: ${{ env.GRADING_REPO }}
+          GRADING_PR_ID: ${{ steps.create-grading-pr.outputs.pr_number }}
+          STUDENT_REPO: ${{ github.repository }}
+          PASSED: ${{ steps.parse.outputs.passed }}
+          TOTAL: ${{ steps.get-tests-score.outputs.total }}
+          EARNED: ${{ steps.aggregate-points.outputs.earned }}
+          AVAILABLE: ${{ steps.aggregate-points.outputs.available }}
+          BOT_USER: ${{ vars.PR_AGENT_BOT_USER }}
+          FUNCTIONALITY: ${{ steps.aggregate-points.outputs.functionality }}
+          CODE_QUALITY: ${{ steps.aggregate-points.outputs.code_quality }}
+        with:
+          github-token: ${{ secrets.CLASSROOM_TOKEN }}
+          script: |
+            async function getFeedbackPrNumber({ github, owner, repo }) {
+              const prs = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: 'open',
+                base: 'feedback',
+                head: `main`,
+                per_page: 5
+              });
+
+              if (!prs.data.length) throw new Error(`No feedback PR found in ${owner}/${repo}.`);
+
+              return prs.data[0].number;
+            }
+
+            function calculateGrade(earned, available) {
+              // Calculate grade based on marks out of 10
+              const percent = available > 0 ? (earned / available) * 100 : 0;
+              if (percent >= 90) return 'A+';
+              if (percent >= 80) return 'A';
+              if (percent >= 70) return 'B';
+              if (percent >= 60) return 'C';
+              if (percent >= 50) return 'D';
+              if (percent >= 40) return 'E';
+              return 'Fail';
+            }
+
+            function formatBody({ score, comment, gradingRepo, gradingPrId, studentRepo, feedbackPr, functionality, codeQuality, earned, available }) {
+              const grade = calculateGrade(earned, available);
+              let fixedBody = comment.replace(new RegExp(`${gradingRepo}/pull/${gradingPrId}`, 'g'), `${studentRepo}/pull/${feedbackPr}`);
+
+              fixedBody = fixedBody.replace(/PR Reviewer Guide/g, 'Exercise Status Report');
+              fixedBody = fixedBody.replace(/to aid the review process/g, 'on the current state of your exercise');
+
+              // Replace the score table with individual marks out of 5 and overall grade
+              const scoreTableRegex = /<tr><td>🏅&nbsp;<strong>Score<\/strong>: (\d+)<\/td><\/tr>/;
+              const rowTemplate = (label, value) => `<tr><td>${label}: <strong>${value}</strong></td></tr>`;
+              const funcRow = rowTemplate('Functionality', `${functionality}/5`);
+              const qualityRow = rowTemplate('Code Quality', `${codeQuality}/5`);
+              const gradeRow = rowTemplate('Overall Grade', grade);
+
+              fixedBody = fixedBody.replace(scoreTableRegex, `${funcRow}\n${qualityRow}\n${gradeRow}`);
+
+              return fixedBody;
+            }
+
+            function getBotCommentBody({ github, owner, repo, issue_number, botUser }) {
+              return github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: Number(issue_number),
+              })
+                .then(resp => {
+                  const comments = resp.data;
+                  const botComment = comments.reverse().find(c => c.user && c.user.login === botUser);
+
+                  if (!botComment) throw new Error('No bot comment found');
+
+                  return botComment.body;
+                });
+            }
+
+            const score = process.env.SCORE;
+            const gradingRepo = process.env.GRADING_REPO;
+            const gradingPrId = process.env.GRADING_PR_ID;
+            const studentRepo = process.env.STUDENT_REPO;
+            const functionality = parseFloat(process.env.FUNCTIONALITY);
+            const codeQuality = parseFloat(process.env.CODE_QUALITY);
+            const earned = parseFloat(process.env.EARNED);
+            const available = parseFloat(process.env.AVAILABLE);
+            const botUser = process.env.BOT_USER;
+            const [owner, repo] = gradingRepo.split('/');
+            const [studentOwner, studentRepoName] = studentRepo.split('/');
+            let feedbackPr;
+
+            try {
+              feedbackPr = await getFeedbackPrNumber({ github, owner: studentOwner, repo: studentRepoName });
+            } catch (err) {
+              core.setFailed(`Failed to find feedback PR: ${err.message}`);
+              return;
+            }
+
+            let bodyRaw;
+
+            try {
+              bodyRaw = await getBotCommentBody({ github, owner, repo, issue_number: gradingPrId, botUser });
+            } catch (err) {
+              core.setFailed(`Failed to fetch bot comment: ${err.message}`);
+              return;
+            }
+
+            let feedbackBody;
+
+            try {
+              feedbackBody = formatBody({ score, comment: bodyRaw, gradingRepo, gradingPrId, studentRepo, feedbackPr, functionality, codeQuality, earned, available });
+            } catch (err) {
+              core.setFailed(`Failed to format feedback body: ${err.message}`);
+              return;
+            }
+
+            console.log('Feedback body to post:\n', feedbackBody);
+
+            try {
+              await github.rest.issues.createComment({
+                owner: studentOwner,
+                repo: studentRepoName,
+                issue_number: Number(feedbackPr),
+                body: feedbackBody
+              });
+            } catch (err) {
+              core.setFailed(`Failed to post feedback comment: ${err.message}`);
+              return;
+            }
+
+      - name: Report grade to Classroom
+        uses: actions/github-script@v7
+        env:
+          POINTS_EARNED: ${{ steps.aggregate-points.outputs.earned }}
+          POINTS_TOTAL: ${{ steps.aggregate-points.outputs.available }}
+        with:
+          script: |
+            const pointsEarned = process.env.POINTS_EARNED;
+            const pointsTotal = process.env.POINTS_TOTAL;
+            const text = `Points ${pointsEarned}/${pointsTotal}`;
+            const summary = `{"totalPoints":${pointsEarned},"maxPoints":${pointsTotal}}`;
+
+            core.notice(text, { title: 'Autograding complete' });
+            core.notice(summary, { title: 'Autograding report' });
