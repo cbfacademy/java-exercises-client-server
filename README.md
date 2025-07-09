@@ -52,6 +52,18 @@ To verify that your code works as expected, run the tests:
 ./mvnw clean test
 ```
 
+#### :warning: IMPORTANT
+
+Due to the nature of the tests needing to bind the same port, it's advisable to run the server and client tests separately until both classes are complete, i.e.:
+
+```shell
+./mvnw clean test -Dtest=SocketServerTest
+```
+
+```shell
+./mvnw clean test -Dtest=SocketClientTest
+```
+
 [1]: https://docs.oracle.com/javase/21/docs/api/index.html
 [2]: https://junit.org/junit5/
 [3]: https://maven.apache.org/
