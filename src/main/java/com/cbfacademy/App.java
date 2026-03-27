@@ -7,7 +7,7 @@ import java.net.URI;
 public class App {
     public static void main(String[] args) {
         try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(new URI("https://codingblackfemales.com").toURL().openStream()))) {
+                new InputStreamReader(new URI("https://example.com").toURL().openStream()))) {
             String inputLine;
 
             while ((inputLine = reader.readLine()) != null) {
