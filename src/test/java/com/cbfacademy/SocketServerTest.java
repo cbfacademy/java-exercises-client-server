@@ -13,7 +13,6 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.net.SocketException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -48,7 +47,7 @@ public class SocketServerTest {
                 Thread.currentThread().interrupt();
             }
         }
-        
+
         // Restore original System.out
         System.setOut(originalOut);
         serverRunning = false;
@@ -60,21 +59,21 @@ public class SocketServerTest {
     public void serverStartsAndListens() throws Exception {
         // Skip test if SocketServer class doesn't exist
         assumeTrue(isSocketServerImplemented(), "SocketServer class must be implemented to run this test");
-        
+
         // Start server in a separate thread
         startServerInBackground();
-        
+
         // Wait for server to start
-        assertThat("Server should start within timeout", 
-                   serverStarted.await(5, TimeUnit.SECONDS));
-        
+        assertThat("Server should start within timeout",
+                serverStarted.await(5, TimeUnit.SECONDS));
+
         // Give additional time for output to be captured
         Thread.sleep(100);
-        
+
         // Check that server announces it's listening
         String output = outputCapture.toString();
-        assertThat("Server should announce it's listening on port 4040", 
-                   output, containsString("Server is listening on port 4040"));
+        assertThat("Server should announce it's listening on port 4040",
+                output, containsString("Server is listening on port 4040"));
     }
 
     @Test
@@ -83,22 +82,22 @@ public class SocketServerTest {
     public void serverReceivesClientMessages() throws Exception {
         // Skip test if SocketServer class doesn't exist
         assumeTrue(isSocketServerImplemented(), "SocketServer class must be implemented to run this test");
-        
+
         // Start server in background
         startServerInBackground();
         serverStarted.await(5, TimeUnit.SECONDS);
-        
+
         // Send a message to the server
         String testMessage = "Test message from client";
         sendMessageToServer(testMessage);
-        
+
         // Give server time to process the message
         Thread.sleep(100);
-        
+
         // Check that server received and logged the message
         String output = outputCapture.toString();
-        assertThat("Server should log received message", 
-                   output, containsString("Received message from client: " + testMessage));
+        assertThat("Server should log received message",
+                output, containsString("Received message from client: " + testMessage));
     }
 
     @Test
@@ -107,46 +106,46 @@ public class SocketServerTest {
     public void serverHandlesMultipleClients() throws Exception {
         // Skip test if SocketServer class doesn't exist
         assumeTrue(isSocketServerImplemented(), "SocketServer class must be implemented to run this test");
-        
+
         // Start server in background
         startServerInBackground();
         serverStarted.await(5, TimeUnit.SECONDS);
-        
+
         // Send multiple messages
         String message1 = "First message";
         String message2 = "Second message";
-        
+
         sendMessageToServer(message1);
         Thread.sleep(50);
         sendMessageToServer(message2);
         Thread.sleep(100);
-        
+
         String output = outputCapture.toString();
-        assertThat("Server should receive first message", 
-                   output, containsString("Received message from client: " + message1));
-        assertThat("Server should receive second message", 
-                   output, containsString("Received message from client: " + message2));
+        assertThat("Server should receive first message",
+                output, containsString("Received message from client: " + message1));
+        assertThat("Server should receive second message",
+                output, containsString("Received message from client: " + message2));
     }
 
     private void startServerInBackground() {
         serverThread = new Thread(() -> {
             try {
                 serverRunning = true;
-                
+
                 // Run the server using reflection to avoid compilation dependency
                 Class<?> serverClass = Class.forName("com.cbfacademy.SocketServer");
                 java.lang.reflect.Method mainMethod = serverClass.getMethod("main", String[].class);
-                mainMethod.invoke(null, (Object) new String[]{});
+                mainMethod.invoke(null, (Object) new String[] {});
             } catch (Exception e) {
                 if (serverRunning && !Thread.currentThread().isInterrupted()) {
                     e.printStackTrace();
                 }
             }
         });
-        
+
         serverThread.setDaemon(true); // Make it a daemon thread
         serverThread.start();
-        
+
         // Give the server a moment to start and print its message
         try {
             Thread.sleep(200);
@@ -158,8 +157,8 @@ public class SocketServerTest {
 
     private void sendMessageToServer(String message) throws IOException {
         try (Socket socket = new Socket("localhost", 4040);
-             PrintWriter out = new PrintWriter(socket.getOutputStream(), true)) {
-            
+                PrintWriter out = new PrintWriter(socket.getOutputStream(), true)) {
+
             out.println(message);
         }
     }
@@ -176,4 +175,4 @@ public class SocketServerTest {
             return false; // Class doesn't exist, skip tests
         }
     }
-} 
+}

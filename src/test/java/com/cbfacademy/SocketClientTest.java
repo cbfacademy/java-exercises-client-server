@@ -52,7 +52,7 @@ public class SocketClientTest {
                 Thread.currentThread().interrupt();
             }
         }
-        
+
         // Restore original System.out
         System.setOut(originalOut);
     }
@@ -63,28 +63,28 @@ public class SocketClientTest {
     public void clientConnectsAndSendsMessage() throws Exception {
         // Skip test if SocketClient class doesn't exist
         assumeTrue(isSocketClientImplemented(), "SocketClient class must be implemented to run this test");
-        
+
         // Start mock server
         startMockServer();
-        
+
         // Wait for server to be ready
         assertThat("Mock server should start within timeout",
-                   serverReady.await(5, TimeUnit.SECONDS));
-        
+                serverReady.await(5, TimeUnit.SECONDS));
+
         // Run the client using reflection to avoid compilation dependency
         runSocketClientMain();
-        
+
         // Give time for message to be processed
         Thread.sleep(100);
-        
+
         // Verify client sent the expected message
         assertThat("Client should send 'Hello, World!' message",
-                   receivedMessage.get(), is("Hello, World!"));
-        
+                receivedMessage.get(), is("Hello, World!"));
+
         // Verify console output
         String output = outputCapture.toString();
         assertThat("Client should log sent message",
-                   output, containsString("Sent message to server: Hello, World!"));
+                output, containsString("Sent message to server: Hello, World!"));
     }
 
     @Test
@@ -93,19 +93,19 @@ public class SocketClientTest {
     public void clientHandlesConnection() throws Exception {
         // Skip test if SocketClient class doesn't exist
         assumeTrue(isSocketClientImplemented(), "SocketClient class must be implemented to run this test");
-        
+
         // Start mock server
         startMockServer();
         serverReady.await(5, TimeUnit.SECONDS);
-        
+
         // Run client using reflection
         runSocketClientMain();
         Thread.sleep(100);
-        
+
         // Verify no exceptions in output (no stack trace)
         String output = outputCapture.toString();
         assertThat("Client should connect without errors",
-                   !output.contains("Exception") && !output.contains("Error"));
+                !output.contains("Exception") && !output.contains("Error"));
     }
 
     @Test
@@ -114,19 +114,19 @@ public class SocketClientTest {
     public void clientSendsProperlyFormattedMessage() throws Exception {
         // Skip test if SocketClient class doesn't exist
         assumeTrue(isSocketClientImplemented(), "SocketClient class must be implemented to run this test");
-        
+
         startMockServer();
         serverReady.await(5, TimeUnit.SECONDS);
-        
+
         runSocketClientMain();
         Thread.sleep(100);
-        
+
         // Verify exact message content
         String received = receivedMessage.get();
         assertThat("Message should be exactly 'Hello, World!'",
-                   received, is("Hello, World!"));
+                received, is("Hello, World!"));
         assertThat("Message should not contain extra whitespace",
-                   received.trim(), is(received));
+                received.trim(), is(received));
     }
 
     private void startMockServer() {
@@ -134,12 +134,12 @@ public class SocketClientTest {
             try (ServerSocket serverSocket = new ServerSocket(4040)) {
                 // Signal that server is ready
                 serverReady.countDown();
-                
+
                 // Accept one connection and read the message
                 try (Socket clientSocket = serverSocket.accept();
-                     BufferedReader in = new BufferedReader(
-                         new InputStreamReader(clientSocket.getInputStream()))) {
-                    
+                        BufferedReader in = new BufferedReader(
+                                new InputStreamReader(clientSocket.getInputStream()))) {
+
                     String message = in.readLine();
                     receivedMessage.set(message);
                 }
@@ -149,18 +149,19 @@ public class SocketClientTest {
                 }
             }
         });
-        
+
         mockServerThread.setDaemon(true);
         mockServerThread.start();
     }
 
     /**
-     * Helper method to run SocketClient.main() using reflection to avoid compilation dependency.
+     * Helper method to run SocketClient.main() using reflection to avoid
+     * compilation dependency.
      */
     private void runSocketClientMain() throws Exception {
         Class<?> clientClass = Class.forName("com.cbfacademy.SocketClient");
         java.lang.reflect.Method mainMethod = clientClass.getMethod("main", String[].class);
-        mainMethod.invoke(null, (Object) new String[]{});
+        mainMethod.invoke(null, (Object) new String[] {});
     }
 
     /**
@@ -175,4 +176,4 @@ public class SocketClientTest {
             return false; // Class doesn't exist, skip tests
         }
     }
-} 
+}

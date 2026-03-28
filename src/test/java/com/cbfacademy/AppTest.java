@@ -48,24 +48,24 @@ public class AppTest {
     @DisplayName("main method outputs website content correctly")
     public void mainMethodOutputsWebsiteContent() throws Exception {
         // Call the main method (which will print to our captured output)
-        App.main(new String[]{});
-        
+        App.main(new String[] {});
+
         // Get the captured output
         String actualOutput = outputCapture.toString();
-        
+
         // Make our own request to get expected output
         String expectedOutput = getExpectedWebsiteContent();
-        
+
         // Compare the outputs
-        assertThat("Main method should output the same content as direct HTTP request", 
-                   actualOutput.trim(), is(expectedOutput.trim()));
+        assertThat("Main method should output the same content as direct HTTP request",
+                actualOutput.trim(), is(expectedOutput.trim()));
     }
 
     private String getExpectedWebsiteContent() throws Exception {
         URL url = new URI("https://codingblackfemales.com").toURL();
         URLConnection connection = url.openConnection();
         connection.connect();
-        
+
         StringBuilder content = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
             String inputLine;
@@ -76,7 +76,7 @@ public class AppTest {
                 }
             }
         }
-        
+
         return content.toString();
     }
 }
