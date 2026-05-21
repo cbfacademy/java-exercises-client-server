@@ -8,5 +8,4 @@ on:
 jobs:
   autograding:
     uses: cbfacademy/autograding-workflows/.github/workflows/classroom-autograding.yml@main
-    secrets:
-      CLASSROOM_TOKEN: ${{ secrets.CLASSROOM_TOKEN }}
+    secrets: inherit
